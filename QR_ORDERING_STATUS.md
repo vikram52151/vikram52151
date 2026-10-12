@@ -39,7 +39,7 @@ No pull requests are open yet. `master` in both repositories is still the pre-wa
 | Frontend end-to-end tests (customer flow, table service in Hindi, accessibility scans) | 4 pass |
 | Production npm audit | 0 vulnerabilities |
 | Secret scan (gitleaks, full history, both repos) | No leaks (as of phase 6) |
-| GitHub Actions CI | See the latest run on each repository's branch |
+| GitHub Actions CI | Passing on both repositories (ui `aebc93f`, bkd `2da856d`) |
 
 ## What each phase delivered
 
