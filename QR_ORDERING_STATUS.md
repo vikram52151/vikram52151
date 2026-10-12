@@ -1,6 +1,7 @@
 # QR Ordering — gap walkthrough status
 
-Last updated: 12 Oct 2026. Covers the two code repositories:
+Last updated: 12 Oct 2026 (after the readiness and competitor recommendations). Covers the two code
+repositories:
 
 - [QR-Code-ui](https://github.com/vikram52151/QR-Code-ui) (Angular web app and Android APK)
 - [QR-Code-bkd](https://github.com/vikram52151/QR-Code-bkd) (Spring Boot API)
@@ -13,7 +14,7 @@ Each repository's `FIXES.md` has the detailed write-up for every phase.
 | Branch | Contains | Merged into `master`? |
 |---|---|---|
 | `claude/pensive-planck-b0uqoz` | Phase 1 | No |
-| `claude/magical-noether-ys2e87` | Phase 1 + phases 2–6 (built on top of phase 1) | No |
+| `claude/magical-noether-ys2e87` | Phase 1 + phases 2–6 + the recommendations below | No |
 
 No pull requests are open yet. `master` in both repositories is still the pre-walkthrough code
 (ui `33ef21a`, bkd `4b5e429`).
@@ -33,12 +34,12 @@ No pull requests are open yet. `master` in both repositories is still the pre-wa
 
 | | Result |
 |---|---|
-| Backend tests | 107 pass, including every migration applied to a real MySQL 8.4 |
-| Frontend unit tests | 68 pass |
-| Frontend end-to-end tests (customer flow + accessibility scan) | 3 pass |
+| Backend tests | 122 pass, including every migration (V1–V15) applied to a real MySQL 8.4 |
+| Frontend unit tests | 83 pass |
+| Frontend end-to-end tests (customer flow, table service in Hindi, accessibility scans) | 4 pass |
 | Production npm audit | 0 vulnerabilities |
-| Secret scan (gitleaks, full history, both repos) | No leaks |
-| GitHub Actions CI | Passing on both repositories |
+| Secret scan (gitleaks, full history, both repos) | No leaks (as of phase 6) |
+| GitHub Actions CI | See the latest run on each repository's branch |
 
 ## What each phase delivered
 
@@ -59,6 +60,33 @@ No pull requests are open yet. `master` in both repositories is still the pre-wa
   customer self-cancel; menus and orders separated by outlet.
 - **Phase 6** — CI with dependency and secret scanning; end-to-end tests; health check that
   tests the database and storage; backup and restore scripts; `docs/RUNBOOK.md` (backend repo).
+
+## Recommendations from the readiness and competitor review
+
+From [research/QR_READINESS_AND_COMPETITORS.md](research/QR_READINESS_AND_COMPETITORS.md).
+
+| Area | What changed | QR-Code-ui | QR-Code-bkd |
+|---|---|---|---|
+| Pricing | 30 bonus days on the first payment only (it was every payment, making monthly cheaper per day than yearly); renewals extend from the end date; GST shown and charged per `BILLING_GST_MODE`; plans list only real features; outlets limited 1 / 2 / 5 | `7529b8f`, `1552027` | `4ad3a48` |
+| Lapsed plans | 3-day grace period with a red banner; after it, the QR still shows the menu with "order at the counter"; SMS reminders 7/3/1/0 days before the end (when SMS is on) | `7529b8f` | `4ad3a48` |
+| Privacy | Owner can delete the account; public deletion-request page handled from the admin portal; diners' details erased after 90 days; staff see only the last 4 digits of a number; customer mobile optional | `583f77d` | `991175f` |
+| Support and legal | Contact, privacy, terms and refund pages, support card in the app, all filled from server settings; honest landing and setup copy | `583f77d`, `1552027` | `991175f` |
+| Reports | Today vs yesterday with cash/UPI on every plan; by day, item, outlet and CSV on Pro; cancelled orders no longer counted as takings | `f3d5499` | `f6ab332` |
+| Table service | One bill per table; customers call a waiter, ask for water or the bill; staff Tables screen to take one payment and close the table (Growth, Pro) | `e86be5e` | `5f299b6` |
+| Feedback | 1–5 rating after the order is ready; Google review link offered at every rating (Google forbids asking only happy customers); average on the dashboard (Growth, Pro) | `e86be5e` | `5f299b6` |
+| Languages and WhatsApp | Customer ordering page in English, Hindi and Tamil; share a QR's link on WhatsApp from Settings | `17a88ad`, `e86be5e` | — |
+| Docs and tests | FIXES.md in both repos, runbook (scheduled jobs, launch settings, incidents), E2E for table service in Hindi | `aebc93f` | `520c38b` |
+
+Defaults chosen in code that you should confirm:
+
+| Setting | Default | Where to change |
+|---|---|---|
+| Prices | Starter ₹199, Growth ₹299, Pro ₹459 a month | `QrPlan.java` |
+| Outlets / staff logins | 1 / 3, 2 / 8, 5 / 25 | `QrPlan.java` |
+| GST | `NONE` (not registered) | `BILLING_GST_MODE` |
+| Grace period | 3 days | `QrSubscriptionService.GRACE_DAYS` |
+| Diner data kept | 90 days | `DINER_RETENTION_DAYS` |
+| Refund window | 7 days | `REFUND_WINDOW_DAYS` |
 
 ### Problems found along the way and fixed
 
@@ -84,12 +112,13 @@ No pull requests are open yet. `master` in both repositories is still the pre-wa
 
 | Item | Notes |
 |---|---|
-| Table sessions | Group one party's orders at a table into a single bill; close the table |
 | Per-outlet token numbers | Each outlet gets its own 001, 002… sequence (today: one per vendor) |
 | Rate limits in the database | Today they are in memory: reset on restart, not shared between servers |
 | Metrics | Request count, error rate, orders per minute for a monitoring tool |
 | Assign orders to a cook | On the Kitchen screen |
 | Staging build | A separate app build with its own settings |
+| Translate server messages | Errors the server writes (e.g. a refused order) are still English on the Hindi/Tamil page |
+| More languages | Add Kannada, Telugu, Marathi, Bengali to `customer-i18n.ts`; translate the staff app |
 | Full-stack backup/restore test | Run `scripts/backup.sh` and `scripts/restore.sh` against the whole Docker stack (only the database steps were tested) |
 
 ### Needs something from you first
@@ -102,4 +131,9 @@ No pull requests are open yet. `master` in both repositories is still the pre-wa
 | Email verification | An email provider (SES, SendGrid or similar) |
 | Automatic UPI payment verification | A payment gateway account that collects money for vendors (Cashfree, Razorpay or PhonePe) |
 | Printing straight to a printer (no print dialog) | Which printer model is used; likely needs a native Android plugin |
+| Legal pages | A lawyer's review of the privacy, terms and refund text (it is a draft) |
+| Company and support details | Legal name, address, grievance officer, GSTIN, support email/phone/WhatsApp (`COMPANY_*`, `SUPPORT_*` settings) |
+| GST mode | Your CA's decision: `NONE`, `INCLUSIVE` or `EXCLUSIVE` |
+| Hindi and Tamil text | A native speaker's read-through of `customer-i18n.ts` |
+| Renewal reminder SMS | The same SMS provider as above, with a DLT template for the reminder |
 | Merge to `master` | Your go-ahead to open pull requests for `claude/magical-noether-ys2e87` |
