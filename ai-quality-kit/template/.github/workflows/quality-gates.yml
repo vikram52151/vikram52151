@@ -1,0 +1,269 @@
+# Quality gates - deterministic CI checks that every pull request must pass.
+#
+# How to use:
+#  * Mark ONLY the job named "quality-gate" as a required status check in your branch ruleset
+#    (docs/branch-protection.md). It fails if any other job failed or was cancelled. Skipped jobs
+#    count as passing on GitHub, which is why we use one summary job instead of requiring each job.
+#  * Jobs switch themselves on when they find a pom.xml / package.json (detect job). Optional jobs are
+#    switched on with repository variables (Settings > Secrets and variables > Actions > Variables):
+#        BACKEND_DIR      default "."   e.g. "backend"
+#        FRONTEND_DIR     default "."   e.g. "frontend"
+#        JAVA_VERSION     default "21"
+#        NODE_VERSION     default "22"
+#        ENABLE_DIFF_COVER "true" -> fail PRs whose NEW lines have < 80% coverage (diff-cover)
+#        ENABLE_PIT       "true" -> PIT mutation testing (threshold set in pom.xml)
+#        ENABLE_LHCI      "true" -> Lighthouse CI (lighthouserc.json in FRONTEND_DIR)
+#        ENABLE_CODEQL    "false" -> turn CodeQL off (it is on by default; free for public repos,
+#                                  needs GitHub Code Security / Advanced Security for private repos)
+#        ENABLE_SEMGREP   "true" -> Semgrep OWASP rules (alternative or addition to CodeQL)
+#        ENABLE_K6        "true" + K6_BASE_URL -> k6 smoke load test against a running environment
+#  * Delete any job you will never use. Action versions are pinned to major tags; check for newer
+#    majors, and consider pinning to full commit SHAs for supply-chain safety.
+#  * Thresholds live in the build files (pom.xml, angular.json, karma/vitest config, lighthouserc.json),
+#    see pom-snippets.md and package-snippets.md. This workflow just runs the build.
+
+name: Quality gates
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: quality-gates-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  BACKEND_DIR: ${{ vars.BACKEND_DIR || '.' }}
+  FRONTEND_DIR: ${{ vars.FRONTEND_DIR || '.' }}
+
+jobs:
+  detect:
+    name: detect
+    runs-on: ubuntu-latest
+    outputs:
+      backend: ${{ steps.d.outputs.backend }}
+      frontend: ${{ steps.d.outputs.frontend }}
+      codeql_languages: ${{ steps.d.outputs.codeql_languages }}
+    steps:
+      - uses: actions/checkout@v6
+      - id: d
+        run: |
+          langs=()
+          if [ -f "$BACKEND_DIR/pom.xml" ]; then
+            echo "backend=true" >> "$GITHUB_OUTPUT"; langs+=('"java-kotlin"')
+          else
+            echo "backend=false" >> "$GITHUB_OUTPUT"
+          fi
+          if [ -f "$FRONTEND_DIR/package.json" ]; then
+            echo "frontend=true" >> "$GITHUB_OUTPUT"; langs+=('"javascript-typescript"')
+          else
+            echo "frontend=false" >> "$GITHUB_OUTPUT"
+          fi
+          echo "codeql_languages=[$(IFS=,; echo "${langs[*]}")]" >> "$GITHUB_OUTPUT"
+
+  # ---------------------------------------------------------------- backend (Maven / Spring Boot)
+  backend:
+    name: backend
+    needs: detect
+    if: needs.detect.outputs.backend == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: ${{ vars.BACKEND_DIR || '.' }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0   # full history so diff-cover can compare with the base branch
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: ${{ vars.JAVA_VERSION || '21' }}
+          cache: maven
+      - name: Build, test, coverage check, static analysis (mvn verify)
+        # verify runs unit tests (surefire), integration tests (failsafe, if configured),
+        # the JaCoCo coverage check and SpotBugs + FindSecBugs if they are bound to verify in pom.xml.
+        run: |
+          if [ -x ./mvnw ]; then MVN=./mvnw; else MVN=mvn; fi
+          $MVN -B -ntp verify
+      - name: Coverage on new lines >= 80% (diff-cover)
+        if: github.event_name == 'pull_request' && vars.ENABLE_DIFF_COVER == 'true'
+        # diff-cover reads the JaCoCo XML report; check its docs for your version's options.
+        run: |
+          pipx run diff-cover target/site/jacoco/jacoco.xml \
+            --compare-branch=origin/${{ github.base_ref }} \
+            --src-roots src/main/java \
+            --fail-under=80
+      - name: Mutation testing (PIT)
+        if: vars.ENABLE_PIT == 'true'
+        # Threshold (mutationThreshold) is set in pom.xml. Use scmMutationCoverage or Arcmutate for
+        # changed-code-only runs on PRs, and a full run nightly - it is slow.
+        run: |
+          if [ -x ./mvnw ]; then MVN=./mvnw; else MVN=mvn; fi
+          $MVN -B -ntp test-compile org.pitest:pitest-maven:mutationCoverage
+      - name: Upload reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: backend-reports
+          path: |
+            ${{ vars.BACKEND_DIR || '.' }}/target/site/jacoco/
+            ${{ vars.BACKEND_DIR || '.' }}/target/surefire-reports/
+            ${{ vars.BACKEND_DIR || '.' }}/target/spotbugsXml.xml
+            ${{ vars.BACKEND_DIR || '.' }}/target/pit-reports/
+          if-no-files-found: ignore
+
+  # ---------------------------------------------------------------- frontend (Angular / npm)
+  frontend:
+    name: frontend
+    needs: detect
+    if: needs.detect.outputs.frontend == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: ${{ vars.FRONTEND_DIR || '.' }}
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ vars.NODE_VERSION || '22' }}
+          cache: npm
+          cache-dependency-path: ${{ vars.FRONTEND_DIR || '.' }}/package-lock.json
+      - name: Install exact locked dependencies
+        run: npm ci
+      - name: Lint (ESLint)
+        run: npm run lint
+      - name: Unit tests with coverage thresholds
+        # 'test:ci' should run once (no watch) with coverage; thresholds live in karma.conf.js or
+        # the Vitest config, so the command fails when coverage is below them. See package-snippets.md.
+        run: npm run test:ci
+      - name: Production build (fails if angular.json budgets are exceeded)
+        run: npm run build
+      - name: Known vulnerabilities in production dependencies (high and critical)
+        run: npm audit --omit=dev --audit-level=high
+      - name: Lighthouse CI (Core Web Vitals lab proxies)
+        if: vars.ENABLE_LHCI == 'true'
+        # Uses lighthouserc.json; start with "warn" assertions, switch to "error" once runs are stable.
+        run: npx --yes @lhci/cli@0.14.0 autorun
+      - name: Upload reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: frontend-reports
+          path: |
+            ${{ vars.FRONTEND_DIR || '.' }}/coverage/
+            ${{ vars.FRONTEND_DIR || '.' }}/lhci-report/
+          if-no-files-found: ignore
+
+  # ---------------------------------------------------------------- security
+  secrets-scan:
+    name: secrets-scan
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - name: gitleaks (0 secrets allowed)
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Free for personal accounts; repositories owned by an organization need a (free) license key:
+          GITLEAKS_LICENSE: ${{ secrets.GITLEAKS_LICENSE }}
+
+  dependency-review:
+    name: dependency-review
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v6
+      - name: Block new dependencies with high/critical vulnerabilities (CVSS >= 7)
+        # Needs the dependency graph; private repos need GitHub Code Security / Advanced Security.
+        uses: actions/dependency-review-action@v4
+        with:
+          fail-on-severity: high
+          comment-summary-in-pr: on-failure
+
+  codeql:
+    name: codeql (${{ matrix.language }})
+    needs: detect
+    if: vars.ENABLE_CODEQL != 'false' && needs.detect.outputs.codeql_languages != '[]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      actions: read
+      security-events: write
+    strategy:
+      fail-fast: false
+      matrix:
+        language: ${{ fromJSON(needs.detect.outputs.codeql_languages) }}
+    steps:
+      - uses: actions/checkout@v6
+      - uses: github/codeql-action/init@v3
+        with:
+          languages: ${{ matrix.language }}
+          build-mode: none
+          queries: security-extended
+      - uses: github/codeql-action/analyze@v3
+        with:
+          category: /language:${{ matrix.language }}
+    # To BLOCK merges on CodeQL findings, add the "Require code scanning results" rule to your
+    # branch ruleset (docs/branch-protection.md); this job alone only uploads the results.
+
+  semgrep:
+    name: semgrep
+    if: vars.ENABLE_SEMGREP == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    container:
+      image: semgrep/semgrep   # pin a version tag (e.g. semgrep/semgrep:1.<x>.<y>) once you adopt it
+    steps:
+      - uses: actions/checkout@v6
+      - name: Semgrep OWASP Top 10 rules (fails on findings)
+        run: semgrep scan --config p/owasp-top-ten --error --metrics=off
+
+  # ---------------------------------------------------------------- performance smoke test (optional)
+  load-smoke:
+    name: load-smoke
+    if: vars.ENABLE_K6 == 'true' && vars.K6_BASE_URL != ''
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+      - uses: grafana/setup-k6-action@v1
+      - name: k6 smoke test (p95 < 500 ms, errors < 1%; k6 exits non-zero when a threshold fails)
+        uses: grafana/run-k6-action@v1
+        env:
+          BASE_URL: ${{ vars.K6_BASE_URL }}
+        with:
+          path: perf/smoke.js
+
+  # ---------------------------------------------------------------- the one required check
+  quality-gate:
+    name: quality-gate
+    if: always()
+    needs: [detect, backend, frontend, secrets-scan, dependency-review, codeql, semgrep, load-smoke]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Fail if any gate failed or was cancelled
+        env:
+          RESULTS: ${{ join(needs.*.result, ' ') }}
+        run: |
+          echo "Job results: $RESULTS"
+          for r in $RESULTS; do
+            case "$r" in
+              failure|cancelled) echo "::error::At least one quality gate job did not pass."; exit 1 ;;
+            esac
+          done
+          echo "All quality gate jobs passed or were not applicable."

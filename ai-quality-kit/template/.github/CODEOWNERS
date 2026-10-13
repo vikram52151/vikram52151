@@ -1,0 +1,36 @@
+# CODEOWNERS - who must approve changes to which files.
+# Approval from code owners is only REQUIRED when "Require review from Code Owners" is switched on
+# in your branch ruleset (see docs/branch-protection.md). This file must exist on the base branch.
+# Later lines win over earlier ones. One approval from any listed owner is enough.
+#
+# Replace @your-org/maintainers and @your-username with real GitHub teams or users.
+# Never list a bot or the Claude GitHub App as an owner.
+
+# Default owner for everything
+*                                   @your-org/maintainers
+
+# The guardrails themselves: an agent must never be able to loosen these without a human
+/.github/                           @your-username
+/.claude/                           @your-username
+/CLAUDE.md                          @your-username
+/REVIEW.md                          @your-username
+/docs/branch-protection.md          @your-username
+
+# Build files that contain gate thresholds (coverage, SpotBugs, budgets, lint rules)
+pom.xml                             @your-username
+build.gradle                        @your-username
+build.gradle.kts                    @your-username
+package.json                        @your-username
+angular.json                        @your-username
+karma.conf.js                       @your-username
+vitest.config.*                     @your-username
+jest.config.*                       @your-username
+eslint.config.*                     @your-username
+.eslintrc*                          @your-username
+lighthouserc.json                   @your-username
+stryker.config.*                    @your-username
+sonar-project.properties            @your-username
+
+# Security-sensitive code (adjust paths to your project)
+# /src/main/java/**/security/       @your-org/security
+# /src/main/resources/db/migration/ @your-org/backend-leads

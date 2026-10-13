@@ -1,0 +1,57 @@
+# Claude PR review - ADVISORY ONLY.
+#
+# Posts Claude's review as inline comments on each pull request, using the official
+# anthropics/claude-code-action@v1 and the code-review plugin (the workflow shown in the
+# Claude Code GitHub Actions docs, plus a cost cap, a timeout and a fork guard).
+#
+# Do NOT make this job a required status check. LLM reviewers miss things and sometimes flag
+# correct code; the deterministic checks in quality-gates.yml plus a human approval are the gate.
+#
+# Setup:
+#   1. In Claude Code run /install-github-app, or install https://github.com/apps/claude manually.
+#   2. Add the repository secret ANTHROPIC_API_KEY (or use claude_code_oauth_token instead).
+#   3. Make sure the Claude GitHub App is NOT on any ruleset or branch-protection bypass list.
+# Notes:
+#   * The code-review plugin follows CLAUDE.md. REVIEW.md is read by the managed Claude Code Review
+#     product; to apply REVIEW.md here too, see the alternative prompt at the bottom.
+#   * Pull requests from forks do not receive secrets, so the job is skipped for them.
+
+name: Claude review
+
+on:
+  pull_request:
+    types: [opened, synchronize, ready_for_review, reopened]
+
+concurrency:
+  group: claude-review-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  review:
+    if: github.event.pull_request.draft == false && github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      pull-requests: read
+      issues: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 1
+      - uses: anthropics/claude-code-action@v1
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          plugin_marketplaces: "https://github.com/anthropics/claude-code.git"
+          plugins: "code-review@claude-code-plugins"
+          prompt: "/code-review:code-review --comment ${{ github.repository }}/pull/${{ github.event.pull_request.number }}"
+          # The inline-comment tool is only started when --allowedTools names it. --max-turns caps cost.
+          claude_args: '--max-turns 30 --allowedTools "mcp__github_inline_comment__create_inline_comment"'
+
+# Alternative prompt that applies REVIEW.md (replace the plugin_marketplaces, plugins and prompt lines):
+#          prompt: |
+#            Review pull request ${{ github.repository }}/pull/${{ github.event.pull_request.number }}
+#            against REVIEW.md and CLAUDE.md in this repository. Use the severity labels from REVIEW.md
+#            (Important, Nit, Pre-existing). Post each finding as an inline comment with file and line.
+#            Report only findings that affect correctness, the requirements or code health.
