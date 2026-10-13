@@ -210,3 +210,21 @@ Use `"testRunner": "vitest"` or `"jest"` to match your project.
   exact name exists, is maintained and points to a real repository. LLMs invent package names, and
   attackers register them ("slopsquatting").
 - Commit `package-lock.json` and install in CI with `npm ci`, never `npm install`.
+
+## 8. Copy-paste detection (`.jscpd.json` in the frontend folder, optional)
+
+Catches copied components and services, such as one service per region. CI runs it when the
+repository variable `ENABLE_JSCPD` is `true`. Version from memory: check the latest jscpd release.
+
+```json
+{
+  "threshold": 3,
+  "minTokens": 70,
+  "reporters": ["console"],
+  "ignore": ["**/node_modules/**", "**/dist/**", "**/*.spec.ts", "**/coverage/**"],
+  "format": ["typescript", "javascript", "markup", "css", "scss"]
+}
+```
+
+Run locally with `npx jscpd@4.0.5 src`. A threshold of 3 matches SonarQube's default for duplicated
+lines on new code.

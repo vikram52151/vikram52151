@@ -26,7 +26,12 @@ the style guide is the authority on style; anything not in the style guide is a 
 Read every line of the change. Check, in this order:
 
 1. **Design**: does this belong here? Does it fit the existing architecture and patterns? Does it
-   duplicate an existing helper (search with Grep before saying no)?
+   duplicate an existing helper (search with Grep before saying no)? Is any new endpoint, service,
+   class or method a copy of an existing one for another region, city, outlet, tenant, status or
+   plan (`/api/india/orders` next to `/api/us/orders`, `OrderServiceIndia`, `getMumbaiPrice()`,
+   `/orders/active` + `/orders/pending` with copied bodies)? Run
+   `python3 -I .claude/hooks/api-dup-check.py --root . --all` and list existing endpoints with Grep.
+   Report such copies as Important, with the single parameterised design that should replace them.
 2. **Functionality**: does it do what the task asked? Edge cases (null/empty, zero, max size, unicode,
    time zones, concurrency, retries, partial failure)? Behaviour visible to users or other services
    that changed without being asked for (Hyrum's Law)?

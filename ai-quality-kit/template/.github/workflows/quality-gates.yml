@@ -17,6 +17,8 @@
 #                                  needs GitHub Code Security / Advanced Security for private repos)
 #        ENABLE_SEMGREP   "true" -> Semgrep OWASP rules (alternative or addition to CodeQL)
 #        ENABLE_K6        "true" + K6_BASE_URL -> k6 smoke load test against a running environment
+#        API_DUP_EXTRA_WORDS  extra region-like words for the api-design job (e.g. "andheri bandra")
+#        ENABLE_JSCPD     "true" -> jscpd copy-paste detection on the frontend (fails above 3%)
 #  * Delete any job you will never use. Action versions are pinned to major tags; check for newer
 #    majors, and consider pinning to full commit SHAs for supply-chain safety.
 #  * Thresholds live in the build files (pom.xml, angular.json, karma/vitest config, lighthouserc.json),
@@ -161,6 +163,40 @@ jobs:
             ${{ vars.FRONTEND_DIR || '.' }}/lhci-report/
           if-no-files-found: ignore
 
+  # ---------------------------------------------------------------- API design: one API, many regions
+  # Fails a PR that adds the same endpoint/class/method per region, city, outlet, tenant or status
+  # (e.g. /api/india/orders next to /api/us/orders) instead of one API with a parameter. Only findings
+  # in files the PR touches fail; older ones are listed. Uses .claude/hooks/api-dup-check.py.
+  api-design:
+    name: api-design
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - name: Same API copied per region, outlet or status
+        env:
+          BASE_REF: ${{ github.base_ref }}
+          EXTRA_WORDS: ${{ vars.API_DUP_EXTRA_WORDS }}
+        run: |
+          if [ ! -f .claude/hooks/api-dup-check.py ]; then
+            echo "::warning::.claude/hooks/api-dup-check.py not found; copy it from the AI quality kit."; exit 0
+          fi
+          if [ -n "$BASE_REF" ]; then
+            base=$(git merge-base HEAD "origin/$BASE_REF")
+            python3 -I .claude/hooks/api-dup-check.py --root . --base "$base" --extra-words "$EXTRA_WORDS"
+          else
+            python3 -I .claude/hooks/api-dup-check.py --root . --all --report-only --extra-words "$EXTRA_WORDS"
+          fi
+      - name: Copy-paste detection in the frontend (jscpd, fails above 3% duplicated lines)
+        if: vars.ENABLE_JSCPD == 'true'
+        # Version from memory: check the latest jscpd release. Backend copy-paste is caught by PMD CPD
+        # inside 'mvn verify' (pom-snippets.md, section 6).
+        env:
+          SRC: ${{ vars.FRONTEND_DIR || '.' }}/src
+        run: npx --yes jscpd@4.0.5 --threshold 3 --min-tokens 70 --reporters console --ignore "**/node_modules/**,**/dist/**,**/*.spec.ts" "$SRC"
+
   # ---------------------------------------------------------------- security
   secrets-scan:
     name: secrets-scan
@@ -253,7 +289,7 @@ jobs:
   quality-gate:
     name: quality-gate
     if: always()
-    needs: [detect, backend, frontend, secrets-scan, dependency-review, codeql, semgrep, load-smoke]
+    needs: [detect, backend, frontend, api-design, secrets-scan, dependency-review, codeql, semgrep, load-smoke]
     runs-on: ubuntu-latest
     steps:
       - name: Fail if any gate failed or was cancelled

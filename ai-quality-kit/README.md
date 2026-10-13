@@ -33,9 +33,10 @@ Each layer catches what the one above it misses. Only the last one cannot be byp
 | `CLAUDE.md` | Rules the agent reads every session: project commands (fill these in), Definition of Done, OWASP Top 10:2025 security rules, performance rules, how to work. About 100 lines, on purpose: long files get followed less well. |
 | `REVIEW.md` | How changes are judged, modelled on Google's code review guide: the "improves code health" standard, what to check, severity labels (Important / Nit / Pre-existing). Used by the reviewer subagents and by Claude's GitHub review. |
 | `.claude/settings.json` | Registers the hooks and permission rules (allow common test commands, ask before push/installs, deny force-push, `sudo`, reading `.env`, editing CI and lockfiles). |
-| `.claude/hooks/protect-files.sh` | Runs before every edit and shell command. Blocks: editing `.github/workflows/`, CODEOWNERS, `.claude/`, lockfiles, `.env`, lint/coverage/budget configs; deleting or overwriting test files; `-DskipTests`, `-Dmaven.test.skip`, `gradle -x test`, `--no-verify`, `git push --force`, threshold overrides on the command line, `rm -rf` of whole trees. |
-| `.claude/hooks/ai-gate.sh` | The quality gate. Runs automatically when Claude tries to finish a turn (Stop hook), and by hand with `bash .claude/hooks/ai-gate.sh --manual`. Detects Maven, Gradle and npm projects (root and one folder down), runs build + tests + lint, and checks the git diff for deleted tests, fewer tests or assertions, newly skipped tests, threshold changes and oversized diffs. |
-| `.claude/hooks/post-edit-format.sh` | After each edit, formats the file (Prettier, google-java-format, etc. if installed) and lints it (ESLint), handing problems back to Claude. Never blocks. Never downloads tools. |
+| `.claude/hooks/protect-files.sh` | Runs before every edit and shell command. Blocks: editing `.github/workflows/`, CODEOWNERS, `.claude/`, lockfiles, `.env`, lint/coverage/budget configs; deleting or overwriting test files; the agent adding its own `api-dup-ok` suppression comment; `-DskipTests`, `-Dmaven.test.skip`, `gradle -x test`, `--no-verify`, `git push --force`, threshold overrides on the command line, `rm -rf` of whole trees. |
+| `.claude/hooks/ai-gate.sh` | The quality gate. Runs automatically when Claude tries to finish a turn (Stop hook), and by hand with `bash .claude/hooks/ai-gate.sh --manual`. Detects Maven, Gradle and npm projects (root and one folder down), runs build + tests + lint, runs the duplicate-API check on the files the change touches, and checks the git diff for deleted tests, fewer tests or assertions, newly skipped tests, threshold changes and oversized diffs. |
+| `.claude/hooks/post-edit-format.sh` | After each edit, formats the file (Prettier, google-java-format, etc. if installed), lints it (ESLint) and runs the duplicate-API check on it, handing problems back to Claude straight away. Never blocks. Never downloads tools. |
+| `.claude/hooks/api-dup-check.py` | Finds the same API built again for each region, city, outlet, tenant or status instead of one API with a parameter: `/api/india/orders` next to `/api/us/orders`, `/orders/active` + `/orders/pending` with copied handlers, `OrderServiceIndia` / `OrderServiceUs`, `getMumbaiPrice()` / `getDelhiPrice()`, and the same in frontend calls and OpenAPI files. Reads Spring (Java/Kotlin), NestJS, Express-style routers, Angular/axios calls and OpenAPI JSON. The gate blocks new copies; only a human may add an `api-dup-ok: <reason>` comment to accept one. Run it on a whole repo with `python3 -I .claude/hooks/api-dup-check.py --root . --all`. |
 | `.claude/hooks/session-reminder.sh` | After Claude compacts its context, re-injects the Definition of Done and the current state (changed files, diff size, last gate result). |
 | `.claude/hooks/lib.sh` | Shared helper functions for the scripts above. |
 | `.claude/hooks/quality.conf` | Optional settings: custom gate command, project folders, retry limit, tamper mode, diff-size limit, extra protected paths. All commented out by default. |
@@ -44,15 +45,15 @@ Each layer catches what the one above it misses. Only the last one cannot be byp
 | `.claude/agents/security-reviewer.md` | OWASP Top 10:2025 checklist, secrets, new dependencies (do they exist? maintained?), authorization on every endpoint. |
 | `.claude/agents/performance-reviewer.md` | N+1 queries, indexes, pagination, complexity, timeouts/retries, caching, frontend bundle size. |
 | `.claude/skills/quality-gate/SKILL.md` | The checklist Claude runs before saying "done": scope check, run the gate, call the reviewers, update `docs/FIXES.md`, reply with an evidence summary. |
-| `.github/workflows/quality-gates.yml` | CI: backend (`mvn verify` with JaCoCo + SpotBugs/FindSecBugs, optional diff-cover and PIT), frontend (ESLint, tests with coverage thresholds, production build with budgets, `npm audit`, optional Lighthouse CI), security (gitleaks, dependency review, CodeQL, optional Semgrep), optional k6 smoke test, and one summary job `quality-gate` to mark as required. |
+| `.github/workflows/quality-gates.yml` | CI: backend (`mvn verify` with JaCoCo + SpotBugs/FindSecBugs, optional diff-cover and PIT), frontend (ESLint, tests with coverage thresholds, production build with budgets, `npm audit`, optional Lighthouse CI), security (gitleaks, dependency review, CodeQL, optional Semgrep), optional k6 smoke test, the `api-design` job (duplicate-API check on the PR's files, optional jscpd copy-paste check), and one summary job `quality-gate` to mark as required. |
 | `.github/workflows/claude-review.yml` | Claude reviews each pull request and leaves inline comments. Advisory only; never make it a required check. |
 | `.github/CODEOWNERS` | Who must approve which files. The guardrail files are owned by you. |
 | `docs/branch-protection.md` | Exact GitHub click-path (and API JSON) for the branch ruleset. |
 | `docs/thresholds.md` | Recommended numbers (coverage, duplication, mutation score, Web Vitals, budgets, latency, CVSS) with sources, marked standard / tool default / convention. |
 | `docs/FIXES.md` | Traceability log: requirement -> change -> commit -> test. |
 | `perf/smoke.js` | k6 smoke load test with thresholds (p95 < 500 ms, errors < 1%). |
-| `pom-snippets.md` | Maven plugin config to paste: JaCoCo coverage check, SpotBugs + FindSecBugs, PIT, OWASP Dependency-Check. |
-| `package-snippets.md` | npm/Angular config to paste: scripts, ESLint, Karma/Vitest/Jest coverage thresholds, bundle budgets, `lighthouserc.json`, Stryker. |
+| `pom-snippets.md` | Maven plugin config to paste: JaCoCo coverage check, SpotBugs + FindSecBugs, PIT, OWASP Dependency-Check, PMD CPD copy-paste detection. |
+| `package-snippets.md` | npm/Angular config to paste: scripts, ESLint, Karma/Vitest/Jest coverage thresholds, bundle budgets, `lighthouserc.json`, Stryker, jscpd copy-paste detection. |
 
 ## Install
 
@@ -118,7 +119,10 @@ echo '{"tool_name":"Bash","tool_input":{"command":"mvn test"}}' | bash .claude/h
 3. "Lower the coverage minimum in the CI workflow." -> blocked (CI file is protected).
 4. Break a unit test on purpose, then ask Claude to "finish up". -> When it tries to stop, the Stop hook
    runs the gate, fails, and Claude is told to fix the failure.
-5. Ask for a small feature and then "is it done?". -> It should run the quality-gate skill and reply
+5. "Add `/api/us/orders` like the India one." -> right after the edit Claude is told it copied an API
+   per region; if it carries on, the gate blocks it until there is one `/api/{region}/orders`.
+   Asking it to add `// api-dup-ok` is blocked too: only you can accept a copy.
+6. Ask for a small feature and then "is it done?". -> It should run the quality-gate skill and reply
    with the evidence summary, including the gate output.
 
 **On GitHub**: open a pull request that breaks a test. The `quality-gate` check fails and the Merge
@@ -167,5 +171,8 @@ button stays blocked. A pull request touching `.claude/` or `.github/` should re
 - OWASP Top 10:2025; SonarQube "Sonar way" defaults; web.dev Core Web Vitals; Angular CLI budgets; k6 thresholds.
 - Claude Code documentation: CLAUDE.md, subagents, hooks (event names, exit code 2, `stop_hook_active`),
   permissions, skills, and the `claude-code-action` workflow.
+- One API, many regions: Google's API design guide (resource-oriented design, AIP-121; list filtering
+  through request fields, AIP-160), SonarQube's 3% duplication limit, PMD CPD and jscpd; GitClear's reports
+  (vendor) that copied code blocks rose about eightfold as AI tools spread.
 - Evidence on AI code: Veracode GenAI code security reports (vendor), METR and EvilGenie on reward hacking,
   Spracklen et al. on package hallucination, DORA 2024/2025.

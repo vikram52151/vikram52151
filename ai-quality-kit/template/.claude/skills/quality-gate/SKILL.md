@@ -23,6 +23,11 @@ Diff size vs HEAD:
   If not, stop and propose how to split it.
 - Does it mix a refactor with a behaviour change? If so, say so and propose separating them.
 - Did anything change that the task did not need? Revert it or justify it.
+- Did you add an endpoint, service, class or method that already exists for another region, outlet,
+  tenant, status or plan? Search first (`grep -rn "Mapping(" src/main`, the frontend services). The
+  varying thing must be a parameter and the differences data or configuration. The gate's
+  "duplicate API check" step blocks these copies; fix the design rather than adding `api-dup-ok`
+  (only a human may accept that, with a reason).
 
 ## Step 2: run the gate
 

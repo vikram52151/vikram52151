@@ -12,7 +12,8 @@
 #   *.kt   : ktlint -F (if on PATH)
 #   *.py   : ruff format + ruff check (if on PATH)
 #   *.go   : gofmt -w (if on PATH)
-# Turn parts off in .claude/hooks/quality.conf: FORMAT_ON_EDIT=0, LINT_ON_EDIT=0
+#   source files : api-dup-check.py --files <file> (same API copied per region/outlet/status)
+# Turn parts off in .claude/hooks/quality.conf: FORMAT_ON_EDIT=0, LINT_ON_EDIT=0, API_DUP_ON_EDIT=0
 
 set -u
 HOOK_DIR=$(cd "$(dirname "$0")" && pwd)
@@ -26,6 +27,7 @@ PROJECT_DIR=$(qk_project_dir)
 qk_load_config "$PROJECT_DIR"
 FORMAT_ON_EDIT="${FORMAT_ON_EDIT:-1}"
 LINT_ON_EDIT="${LINT_ON_EDIT:-1}"
+API_DUP_ON_EDIT="${API_DUP_ON_EDIT:-1}"
 
 FILE=$(qk_json_get "$INPUT" '.tool_input.file_path')
 [ -z "$FILE" ] && FILE=$(qk_json_get "$INPUT" '.tool_input.notebook_path')
@@ -81,9 +83,31 @@ case "$ext" in
     if [ "$FORMAT_ON_EDIT" = 1 ] && qk_have gofmt; then gofmt -w "$FILE" >/dev/null 2>&1; fi ;;
 esac
 
+DUP_OUT=""
+case "$ext" in
+  java|kt|ts|tsx|js|jsx|mjs|cjs|json)
+    if [ "$API_DUP_ON_EDIT" = 1 ] && [ "${API_DUP_MODE:-block}" != off ] && qk_have python3; then
+      tmo=""; qk_have timeout && tmo="timeout 20"   # macOS has no 'timeout' by default
+      # shellcheck disable=SC2086
+      out=$($tmo python3 -I "$HOOK_DIR/api-dup-check.py" --root "$PROJECT_DIR" --files "$FILE" \
+              --extra-words "${API_DUP_EXTRA_WORDS:-}" --similarity "${API_DUP_SIMILARITY:-0.85}" 2>/dev/null)
+      [ $? -eq 1 ] && DUP_OUT=$(printf '%s\n' "$out" | sed -n '/^NEW findings/,/^existing/p' | grep -v '^existing' | head -n 30)
+    fi ;;
+esac
+
+rel=${FILE#"$PROJECT_DIR"/}
+MSG=""
 if [ -n "$LINT_OUT" ]; then
-  rel=${FILE#"$PROJECT_DIR"/}
-  qk_emit_json "PostToolUse" "Lint findings in $rel after your edit. Fix them (do not disable the rule or add ignore comments unless you explain why):
-$LINT_OUT" ""
+  MSG="Lint findings in $rel after your edit. Fix them (do not disable the rule or add ignore comments unless you explain why):
+$LINT_OUT"
+fi
+if [ -n "$DUP_OUT" ]; then
+  MSG="${MSG:+$MSG
+
+}Duplicate API design in $rel: the same API looks copied per region/outlet/status. Make one API that takes it as a parameter (the quality gate will block this):
+$DUP_OUT"
+fi
+if [ -n "$MSG" ]; then
+  qk_emit_json "PostToolUse" "$MSG" ""
 fi
 exit 0

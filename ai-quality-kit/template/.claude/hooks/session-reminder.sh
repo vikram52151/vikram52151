@@ -25,6 +25,7 @@ Reminder after compaction - Definition of Done (full version in CLAUDE.md):
 3. Never delete, skip, disable or weaken tests or assertions, and never edit CI, .claude/, lockfiles or gate config to get a pass.
 4. Before saying "done": run `bash .claude/hooks/ai-gate.sh --manual` and paste its result, then run the quality-gate skill (reviewer subagents).
 5. No new dependency without checking it exists, is maintained and is needed. Record requirement -> commit -> test in docs/FIXES.md.
+6. One API, many regions: search before adding; never copy an endpoint, service or method per region, outlet, tenant or status. Make it a parameter; keep differences in config.
 EOF
 
 if qk_in_git; then

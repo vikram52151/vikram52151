@@ -16,6 +16,10 @@
 #   Make   : make check                            (only when nothing else is detected and a 'check' target exists)
 # Override everything with GATE_CMD in .claude/hooks/quality.conf.
 #
+# Duplicate-API check (api-dup-check.py): the same endpoint, class or method copied per region,
+#   outlet, tenant or status instead of one API that takes it as a parameter. Only findings in files
+#   this change touches count. API_DUP_MODE=block (default) fails the gate, warn only reports, off skips.
+#
 # Best-effort tamper checks (git diff against the merge-base with the main branch):
 #   deleted test files, fewer test declarations or assertions, newly skipped/focused tests,
 #   trivially true assertions, threshold/skip changes in build config, diff size over the limit.
@@ -53,6 +57,9 @@ GATE_CMD="${GATE_CMD:-}"
 GATE_PROJECT_DIRS="${GATE_PROJECT_DIRS:-}"     # e.g. "backend frontend" to skip auto-detection of locations
 GATE_LOG_TAIL="${GATE_LOG_TAIL:-60}"
 GATE_SKIP_DOCS_ONLY="${GATE_SKIP_DOCS_ONLY:-1}"
+API_DUP_MODE="${API_DUP_MODE:-block}"          # block | warn | off
+API_DUP_EXTRA_WORDS="${API_DUP_EXTRA_WORDS:-}"  # more region-like words, e.g. "mumbai-west outlet7"
+API_DUP_SIMILARITY="${API_DUP_SIMILARITY:-0.85}"
 
 STATE_DIR=$(qk_state_dir)
 SESSION="manual"
@@ -250,13 +257,30 @@ else
   fi
 fi
 
-# ---------------------------------------------------------------- tamper and size checks (best effort)
+# ---------------------------------------------------------------- duplicate API check
 WARNINGS=""
 TAMPER=""
 warn() { WARNINGS="${WARNINGS}- $1
 "; }
 tamper() { TAMPER="${TAMPER}- $1
 "; }
+if [ "$API_DUP_MODE" != off ]; then
+  if qk_have python3; then
+    set -- python3 -I "$HOOK_DIR/api-dup-check.py" --root . --extra-words "$API_DUP_EXTRA_WORDS" --similarity "$API_DUP_SIMILARITY"
+    if [ "$IN_GIT" = 1 ]; then set -- "$@" --base "$BASE"; else set -- "$@" --all; fi
+    if [ "$API_DUP_MODE" = block ]; then
+      run_step "duplicate API check (one API, many regions)" "." "$@"
+    else
+      dup_out=$("$@" 2>&1) || warn "Duplicate APIs found (API_DUP_MODE=warn):
+$(printf '%s\n' "$dup_out" | sed -n '/^NEW findings/,/^existing/p' | grep -v '^existing' | head -n 30)"
+    fi
+  else
+    note_not_run "Duplicate API check needs python3"
+  fi
+fi
+set --
+
+# ---------------------------------------------------------------- tamper and size checks (best effort)
 
 count_re() {  # count_re REGEX < text
   grep -Ec -- "$1" 2>/dev/null || true

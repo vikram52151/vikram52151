@@ -8,6 +8,8 @@
 #     (-DskipTests, -Dmaven.test.skip, gradle -x test, ...), bypass git hooks
 #     (--no-verify, core.hooksPath, HUSKY=0), force-push, override gate thresholds
 #     on the command line, write to protected files, or rm -rf a whole tree.
+#   * Adding an 'api-dup-ok' suppression comment (Edit/Write or Bash): only a human may accept a
+#     duplicated per-region API, so the agent cannot silence api-dup-check.py itself.
 #
 # Registered in .claude/settings.json for matcher "Edit|Write|MultiEdit|NotebookEdit" and "Bash".
 # Matching is on command text, so it is best effort: CI and branch protection are the real backstop.
@@ -128,6 +130,21 @@ check_file_tool() {
   if reason=$(protected_reason "$FILE"); then
     block "$reason"
   fi
+  # Only a human may add an 'api-dup-ok' suppression (count before vs after the edit).
+  NEW_TEXT="$(qk_json_get "$INPUT" '.tool_input.new_string')$(qk_json_get "$INPUT" '.tool_input.content')$(qk_json_get "$INPUT" '.tool_input.edits')$(qk_json_get "$INPUT" '.tool_input.new_source')"
+  case "$NEW_TEXT" in
+    *api-dup-ok*)
+      OLD_TEXT=$(qk_json_get "$INPUT" '.tool_input.old_string')
+      if [ -z "$OLD_TEXT" ]; then
+        case "$FILE" in /*) _f=$FILE ;; *) _f="$PROJECT_DIR/$FILE" ;; esac
+        [ -f "$_f" ] && OLD_TEXT=$(cat "$_f" 2>/dev/null)
+      fi
+      n_new=$(printf '%s' "$NEW_TEXT" | grep -o 'api-dup-ok' | wc -l)
+      n_old=$(printf '%s' "$OLD_TEXT" | grep -o 'api-dup-ok' | wc -l)
+      if [ "$n_new" -gt "$n_old" ]; then
+        block "adding an 'api-dup-ok' comment silences the duplicate-API check. Make one API that takes the region/outlet/status as a parameter instead. If a separate API is truly required (legal, data residency, contract), tell the human the reason; only they may add the comment."
+      fi ;;
+  esac
   exit 0
 }
 
@@ -142,6 +159,11 @@ check_bash() {
   FLAT=$(printf '%s' "$CMD" | tr '\n' ' ')
 
   has() { printf '%s' "$FLAT" | grep -Eq -- "$1"; }
+
+  # 0. Self-suppressing the duplicate-API check from the shell (sed -i, echo >>, tee, perl -i ...)
+  if has 'api-dup-ok' && has '(sed|perl)[[:space:]]+(-[A-Za-z]*[[:space:]]+)*-[A-Za-z]*i|>|(^|[[:space:]|])tee([[:space:]]|$)|(cat|printf|echo)[^|;&]*<<'; then
+    block "writing an 'api-dup-ok' comment silences the duplicate-API check. Only the human may add it, with a reason."
+  fi
 
   # 1. Bypassing git hooks
   if has '(^|[^A-Za-z0-9_-])--no-verify([^A-Za-z0-9_-]|$)'; then

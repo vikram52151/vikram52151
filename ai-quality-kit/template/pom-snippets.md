@@ -198,3 +198,36 @@ Run: `./mvnw -B -ntp org.owasp:dependency-check-maven:check` (nightly is usually
   datasource-proxy or Hypersistence Utils `SQLStatementCountValidator`.
 - Expose latency percentiles for SLOs: `management.metrics.distribution.percentiles-histogram.http.server.requests=true`.
 - Keep the build reproducible: commit the Maven wrapper (`mvnw`, `.mvn/wrapper/`) so the hook and CI use the same Maven.
+
+## 6. PMD CPD: copy-paste detection (catches copied controllers and services)
+
+`api-dup-check.py` catches the same API copied per region; CPD catches any copied block of code. Bind
+`cpd-check` to `verify` so `mvn verify` fails when a new copy appears. Version from memory: check the
+latest maven-pmd-plugin release.
+
+```xml
+<plugin>
+  <groupId>org.apache.maven.plugins</groupId>
+  <artifactId>maven-pmd-plugin</artifactId>
+  <version>3.26.0</version>
+  <configuration>
+    <!-- about 10-15 lines of Java; lower it to catch smaller copies -->
+    <minimumTokens>100</minimumTokens>
+    <failOnViolation>true</failOnViolation>
+    <printFailingErrors>true</printFailingErrors>
+    <includeTests>false</includeTests>
+    <excludeRoots>
+      <excludeRoot>target/generated-sources</excludeRoot>
+    </excludeRoots>
+  </configuration>
+  <executions>
+    <execution>
+      <goals><goal>cpd-check</goal></goals>
+    </execution>
+  </executions>
+</plugin>
+```
+
+For an existing codebase with copies already in it, run `mvn pmd:cpd` once, fix or list them, then
+switch `failOnViolation` on so only new copies fail.
+

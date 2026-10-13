@@ -49,6 +49,26 @@ A task is done only when all of these are true. If one cannot be met, say which 
    test(s) that prove it.
 10. **Root cause.** Fix causes, not symptoms. No empty catch blocks, no swallowed errors, no sleeps or
     retries added to make a flaky test pass.
+11. **One API, many regions.** Before adding an endpoint, service, class or method, search for an
+    existing one that does the same job (see "Reuse before you add"). Never copy one per region,
+    city, outlet, tenant, status or plan. The gate runs `api-dup-check.py` and blocks these copies.
+
+## Reuse before you add (one API, many regions)
+
+- First list what exists: `grep -rn "@\(Get\|Post\|Put\|Delete\|Patch\|Request\)Mapping" src/main`
+  (or `bash .claude/hooks/ai-gate.sh --manual`). Say in your plan which existing endpoint or service
+  you extend, or why none fits.
+- The thing that varies is a **parameter**, not a new API: `GET /api/{region}/orders` or
+  `GET /api/orders?region=IN&status=active`, not `/api/india/orders` + `/api/us/orders` or
+  `/orders/active` + `/orders/pending`.
+- Region differences (price, tax, currency, timezone, language, features) live in **data or
+  configuration** (a table, `application.yml`, a `Map<Region, Strategy>` of beans), not in copied
+  classes like `OrderServiceIndia` / `OrderServiceUs` or methods like `getMumbaiPrice()`.
+- New region = new row or config entry, not new code. Validate the parameter (enum or allow-list) and
+  check the caller may access that region (A01).
+- Frontend: one service method that takes the region, not one per region.
+- If a separate endpoint is truly required (legal, data residency, a partner contract), stop and tell
+  the human why. Only they may add the `api-dup-ok: <reason, ticket>` comment (a hook blocks you).
 
 ## Security rules (OWASP Top 10:2025)
 
@@ -99,4 +119,5 @@ A task is done only when all of these are true. If one cannot be met, say which 
 
 - Editing `.github/workflows/`, `.claude/`, CODEOWNERS, lockfiles, `.env*`, lint/test/coverage/budget configs.
 - `--no-verify`, `-DskipTests`, `-Dmaven.test.skip`, `gradle -x test`, `git push --force`, deleting test files.
+- Copies of an API per region/outlet/status: flagged right after the edit and blocked by the gate.
 - The Stop hook runs the gate when you finish a turn. If it blocks you, fix the failures it reports.

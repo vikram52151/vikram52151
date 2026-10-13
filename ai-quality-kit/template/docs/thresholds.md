@@ -42,7 +42,8 @@ How to read the "Type" column:
 |---|---|---|---|---|
 | Line coverage on new code | 80% or more | Block | Tool default | SonarQube "Sonar way" quality gate (new code); applies once there are 20+ new lines |
 | Overall coverage | track; 60% acceptable / 75% commendable / 90% exemplary | Dashboard | Company practice (guideline) | Google Testing Blog, "Code Coverage Best Practices" (2020). Google sets no mandate. |
-| Duplicated lines on new code | 3% or less | Block | Tool default | SonarQube "Sonar way" |
+| Duplicated lines on new code | 3% or less | Block | Tool default | SonarQube "Sonar way"; PMD CPD (100 tokens) and jscpd (`threshold: 3`) in this kit |
+| Same API copied per region/outlet/status | 0 new copies | Block | This kit's rule | `api-dup-check.py` in the gate and CI. Only a human may accept one with `api-dup-ok: <reason>`. Follows Google's API design guide: resource-oriented design (AIP-121), with list filtering through request fields (AIP-160). |
 | New issues / security hotspots on new code | 0 new issues, 100% hotspots reviewed | Block | Tool default | SonarQube "Sonar way" |
 | Cognitive complexity per method | 15 or less | Block (new code) | Tool default | Sonar rule S3776 |
 | Cyclomatic complexity per method | 10 or less | Warn | Convention | McCabe (1976), common linter default |

@@ -20,7 +20,11 @@ file says how to judge one.
 ## What to check (in this order)
 
 1. **Design.** Does the change belong in this codebase and in this place? Does it fit the existing
-   architecture? Does it duplicate something that already exists?
+   architecture? Does it duplicate something that already exists? In particular, is it a copy of an
+   existing endpoint, service or screen for another region, city, outlet, tenant, status or plan?
+   That is a defect: the varying thing should be a parameter (`/api/{region}/orders`,
+   `?status=active`) and the differences should be data or configuration. An `api-dup-ok:` comment
+   needs a real reason (legal, data residency, contract) that the reviewer accepts explicitly.
 2. **Functionality.** Does it do what the requirement asks, for the people who will use it? Edge cases,
    error paths, concurrency (any parallel code must be safe), partial failure. Any behaviour change that
    other code or users could depend on, even if nobody documented it?
